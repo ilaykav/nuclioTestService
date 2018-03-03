@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/nuclio/nuclio/pkg/cmdrunner"
+	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/errors"
 
 	"github.com/nuclio/logger"
@@ -30,8 +32,9 @@ import (
 
 // ShellClient is a docker client that uses the shell to communicate with docker
 type ShellClient struct {
-	logger    logger.Logger
-	cmdRunner cmdrunner.CmdRunner
+	logger         logger.Logger
+	cmdRunner      cmdrunner.CmdRunner
+	redactedValues []string
 }
 
 // NewShellClient creates a new docker client
@@ -184,7 +187,8 @@ func (c *ShellClient) RunContainer(imageName string, runOptions *RunOptions) (st
 		}
 	}
 
-	runResult, err := c.cmdRunner.Run(nil,
+	runResult, err := c.cmdRunner.Run(
+		&cmdrunner.RunOptions{LogRedactions: c.redactedValues},
 		"docker run -d %s %s %s %s %s %s %s",
 		portsArgument,
 		nameArgument,
@@ -227,6 +231,63 @@ func (c *ShellClient) GetContainerLogs(containerID string) (string, error) {
 	return runResult.Output, err
 }
 
+// AwaitContainerHealth blocks until the given container is healthy or the timeout passes
+func (c *ShellClient) AwaitContainerHealth(containerID string, timeout *time.Duration) error {
+	containerHealthy := make(chan error, 1)
+	var timeoutChan <-chan time.Time
+
+	// if no timeout is given, create a channel that we'll never send on
+	if timeout == nil {
+		timeoutChan = make(<-chan time.Time, 1)
+	} else {
+		timeoutChan = time.After(*timeout)
+	}
+
+	go func() {
+
+		// start with a small interval between health checks, increasing it gradually
+		inspectInterval := 100 * time.Millisecond
+
+		for {
+
+			// inspect the container's health, return if it's healthy
+			runResult, err := c.runCommand(nil, "docker inspect --format '{{json .State.Health.Status}}' %s", containerID)
+			if err == nil {
+				stdoutLines := strings.Split(runResult.Output, "\n")
+				lastStdoutLine := c.getLastNonEmptyLine(stdoutLines)
+
+				if lastStdoutLine == `"healthy"` {
+					containerHealthy <- nil
+					return
+				}
+			}
+
+			// wait a bit before retrying
+			c.logger.DebugWith("Container not healthy yet, retrying soon",
+				"inspectOutput", runResult.Output,
+				"nextCheckIn", inspectInterval)
+
+			time.Sleep(inspectInterval)
+
+			// increase the interval up to a cap
+			if inspectInterval < 800*time.Millisecond {
+				inspectInterval *= 2
+			}
+		}
+	}()
+
+	// wait for either the container to be healthy or the timeout
+	select {
+	case <-containerHealthy:
+		c.logger.Debug("Container is healthy")
+	case <-timeoutChan:
+		c.logger.WarnWith("Container wasn't healthy within timeout", "timeout", timeout)
+		return errors.New("Container wasn't healthy in time")
+	}
+
+	return nil
+}
+
 // GetContainers returns a list of container IDs which match a certain criteria
 func (c *ShellClient) GetContainers(options *GetContainerOptions) ([]Container, error) {
 	c.logger.DebugWith("Getting containers", "options", options)
@@ -267,6 +328,8 @@ func (c *ShellClient) GetContainers(options *GetContainerOptions) ([]Container, 
 
 // LogIn allows docker client to access secured registries
 func (c *ShellClient) LogIn(options *LogInOptions) error {
+	c.redactedValues = append(c.redactedValues, options.Password)
+
 	_, err := c.runCommand(nil, `docker login -u %s -p '%s' %s`,
 		options.Username,
 		options.Password,
@@ -282,6 +345,8 @@ func (c *ShellClient) runCommand(runOptions *cmdrunner.RunOptions, format string
 		runOptions = &cmdrunner.RunOptions{}
 	}
 
+	runOptions.LogRedactions = append(runOptions.LogRedactions, c.redactedValues...)
+
 	// make sure output mode is that stdout and stderr are two different streams (don't combine)
 	runOptions.CaptureOutputMode = cmdrunner.CaptureOutputModeStdout
 
@@ -289,7 +354,7 @@ func (c *ShellClient) runCommand(runOptions *cmdrunner.RunOptions, format string
 
 	if runResult.Stderr != "" {
 		c.logger.WarnWith("Docker command outputted to stderr - this may result in errors",
-			"cmd", fmt.Sprintf(format, vars),
+			"cmd", common.Redact(runOptions.LogRedactions, fmt.Sprintf(format, vars)),
 			"stderr", runResult.Stderr)
 	}
 
@@ -298,7 +363,7 @@ func (c *ShellClient) runCommand(runOptions *cmdrunner.RunOptions, format string
 
 func (c *ShellClient) getLastNonEmptyLine(lines []string) string {
 
-	// iterate backwards over the libes
+	// iterate backwards over the lines
 	for idx := len(lines) - 1; idx >= 0; idx-- {
 		if lines[idx] != "" {
 			return lines[idx]
