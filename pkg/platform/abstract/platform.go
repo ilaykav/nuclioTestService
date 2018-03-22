@@ -54,7 +54,7 @@ func NewPlatform(parentLogger logger.Logger, platform platform.Platform) (*Platf
 func (ap *Platform) BuildFunction(buildOptions *platform.BuildOptions) (*platform.BuildResult, error) {
 
 	// execute a build
-	builder, err := build.NewBuilder(buildOptions.Logger)
+	builder, err := build.NewBuilder(buildOptions.Logger, &ap.platform)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create builder")
 	}
@@ -104,6 +104,7 @@ func (ap *Platform) HandleDeployFunction(deployOptions *platform.DeployOptions,
 		buildResult, err = ap.platform.BuildFunction(&platform.BuildOptions{
 			Logger:         deployOptions.Logger,
 			FunctionConfig: deployOptions.FunctionConfig,
+			PlatformName:   ap.platform.GetName(),
 		})
 
 		if err != nil {
