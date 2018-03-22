@@ -8,9 +8,11 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 
 GO_VERSION := $(shell go version | cut -d " " -f 3)
 GOPATH ?= $(shell go env GOPATH)
@@ -229,7 +231,7 @@ IMAGES_TO_PUSH += $(NUCLIO_DOCKER_PROCESSOR_SHELL_ALPINE_IMAGE_NAME)
 
 # nodejs
 NUCLIO_HANDLER_NODEJS_DOCKERFILE_PATH = pkg/processor/build/runtime/nodejs/docker/Dockerfile.handler-nodejs
-NUCLIO_DOCKER_HANDLER_NODEJS_ALPINE_IMAGE_NAME=nuclio/handler-nodejs:$(NUCLIO_DOCKER_IMAGE_TAG_WITH_ARCH)
+NUCLIO_DOCKER_HANDLER_NODEJS_ALPINE_IMAGE_NAME=nuclio/handler-nodejs-alpine:$(NUCLIO_DOCKER_IMAGE_TAG_WITH_ARCH)
 
 handler-nodejs: processor
 	docker build $(NUCLIO_BUILD_ARGS_VERSION_INFO_FILE) \
@@ -276,6 +278,7 @@ lint: ensure-gopath
 		./cmd/... ./pkg/...
 
 	@echo Done.
+
 
 
 .PHONY: test
