@@ -14,12 +14,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package golang
+package main
 
 import (
+	"time"
+
 	"github.com/nuclio/nuclio-sdk-go"
 )
 
-type handlerLoader interface {
-	load(path string, handlerName string) (func(*nuclio.Context, nuclio.Event) (interface{}, error), error)
+func Handler(context *nuclio.Context, event nuclio.Event) (interface{}, error) {
+	return "Good morning", nil
+}
+
+func init() {
+	time.Sleep(5*time.Second)
 }

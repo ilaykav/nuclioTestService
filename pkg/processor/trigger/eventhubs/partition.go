@@ -23,8 +23,8 @@ import (
 	"github.com/nuclio/nuclio/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/processor/worker"
 
+	"github.com/nuclio/amqp"
 	"github.com/nuclio/logger"
-	"pack.ag/amqp"
 )
 
 type partition struct {
@@ -60,7 +60,7 @@ func (p *partition) readFromPartition() error {
 
 	address := fmt.Sprintf("/%s/ConsumerGroups/%s/Partitions/%d", p.ehTrigger.configuration.EventHubName, p.ehTrigger.configuration.ConsumerGroup, p.partitionID)
 	receiver, err := session.NewReceiver(
-		amqp.LinkAddress(address),
+		amqp.LinkSourceAddress(address),
 		amqp.LinkCredit(10),
 	)
 	if err != nil {

@@ -19,6 +19,7 @@ package command
 import (
 	"encoding/json"
 	"os"
+	"time"
 
 	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/errors"
@@ -33,6 +34,7 @@ type deployCommandeer struct {
 	cmd                      *cobra.Command
 	rootCommandeer           *RootCommandeer
 	functionConfig           functionconfig.Config
+	readinessTimeout         time.Duration
 	commands                 stringSliceFlag
 	encodedDataBindings      string
 	encodedTriggers          string
@@ -51,6 +53,11 @@ func newDeployCommandeer(rootCommandeer *RootCommandeer) *deployCommandeer {
 		Use:   "deploy function-name",
 		Short: "Build and deploy a function, or deploy from an existing image",
 		RunE: func(cmd *cobra.Command, args []string) error {
+
+			// update build stuff
+			if len(args) == 1 {
+				commandeer.functionConfig.Meta.Name = args[0]
+			}
 
 			// decode the JSON data bindings
 			if err := json.Unmarshal([]byte(commandeer.encodedDataBindings),
@@ -90,7 +97,7 @@ func newDeployCommandeer(rootCommandeer *RootCommandeer) *deployCommandeer {
 				return errors.Wrap(err, "Failed to initialize root")
 			}
 
-			err := prepareFunctionConfig(args,
+			err := validateFunctionConfig(args,
 				rootCommandeer.platform.GetDeployRequiresRegistry(),
 				&commandeer.functionConfig)
 
@@ -99,8 +106,9 @@ func newDeployCommandeer(rootCommandeer *RootCommandeer) *deployCommandeer {
 			}
 
 			_, err = rootCommandeer.platform.DeployFunction(&platform.DeployOptions{
-				Logger:         rootCommandeer.loggerInstance,
-				FunctionConfig: commandeer.functionConfig,
+				Logger:           rootCommandeer.loggerInstance,
+				FunctionConfig:   commandeer.functionConfig,
+				ReadinessTimeout: &commandeer.readinessTimeout,
 			})
 
 			return err
@@ -114,67 +122,13 @@ func newDeployCommandeer(rootCommandeer *RootCommandeer) *deployCommandeer {
 	return commandeer
 }
 
-func prepareFunctionConfig(args []string,
+func validateFunctionConfig(args []string,
 	registryRequired bool,
 	functionConfig *functionconfig.Config) error {
-
-	var functionName string
-	var specRegistryURL, specImageName, specImageVersion string
-
-	// name can either be a positional argument or passed in the spec
-	if len(args) != 1 {
-		return errors.New("Function run requires a name")
-	}
-
-	functionName = args[0]
-
-	// function can either be in the path, received inline or an executable via handler
-	if functionConfig.Spec.Build.Path == "" &&
-		functionConfig.Spec.ImageName == "" {
-
-		if functionConfig.Spec.Runtime != "shell" {
-			return errors.New("Function path must be provided when specified runtime isn't shell")
-
-		}
-
-		// did user give handler to an executable
-		if functionConfig.Spec.Handler == "" {
-			return errors.New("If shell runtime is specified, function path or handler name must be provided")
-		}
-	}
 
 	if functionConfig.Spec.Build.Registry == "" && registryRequired {
 		return errors.New("A registry is required; can also be specified in spec.image or via a NUCTL_REGISTRY environment variable")
 	}
-
-	if functionConfig.Spec.Build.ImageName == "" {
-
-		// use the function name if image name not provided in specfile
-		functionConfig.Spec.Build.ImageName = functionName
-	}
-
-	// if the image name was not provided in command line / env, take it from the spec image
-	if functionConfig.Spec.Build.ImageName == "" {
-		functionConfig.Spec.Build.ImageName = specImageName
-	}
-
-	// same for version
-	if functionConfig.Spec.Build.ImageVersion == "latest" && specImageVersion != "" {
-		functionConfig.Spec.Build.ImageVersion = specImageVersion
-	}
-
-	// same for push registry
-	if functionConfig.Spec.Build.Registry == "" {
-		functionConfig.Spec.Build.Registry = specRegistryURL
-	}
-
-	// if the run registry wasn't specified, take the build registry
-	if functionConfig.Spec.RunRegistry == "" {
-		functionConfig.Spec.RunRegistry = functionConfig.Spec.Build.Registry
-	}
-
-	// set function name
-	functionConfig.Meta.Name = functionName
 
 	return nil
 }
@@ -198,4 +152,5 @@ func addDeployFlags(cmd *cobra.Command,
 	cmd.Flags().StringVar(&functionConfig.Spec.ImageName, "run-image", "", "Name of an existing image to deploy (default - build a new image to deploy)")
 	cmd.Flags().StringVar(&functionConfig.Spec.RunRegistry, "run-registry", os.Getenv("NUCTL_RUN_REGISTRY"), "URL of a registry for pulling the image, if differs from -r/--registry (env: NUCTL_RUN_REGISTRY)")
 	cmd.Flags().StringVar(&commandeer.encodedRuntimeAttributes, "runtime-attrs", "{}", "JSON-encoded runtime attributes for the function")
+	cmd.Flags().DurationVar(&commandeer.readinessTimeout, "readiness-timeout", 30*time.Second, "maximum wait time for the function to be ready")
 }
